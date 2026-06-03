@@ -58,14 +58,95 @@ function seedData() {
 }
 
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
+
+// ─── USERS (hardcoded, can be changed in Settings) ──────────────────────────
+const DEFAULT_USERS = [
+  {id:"u1", username:"admin", password:"admin123", role:"admin", name:"Admin User"},
+  {id:"u2", username:"cashier", password:"cash123", role:"cashier", name:"Cashier"},
+];
+
+function LoginPage({onLogin}) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [showPass, setShowPass] = useState(false);
+
+  const handleLogin = () => {
+    const users = DB.get("users", DEFAULT_USERS);
+    const user = users.find(u => u.username === username && u.password === password);
+    if (user) {
+      DB.set("session", user);
+      onLogin(user);
+    } else {
+      setError("Invalid username or password");
+      setTimeout(() => setError(""), 3000);
+    }
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a1d2e 0%,#262b40 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:20,padding:"40px 36px",width:"100%",maxWidth:400,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{width:64,height:64,background:"linear-gradient(135deg,#4f8cff,#a259f7)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px"}}>🏪</div>
+          <div style={{fontSize:24,fontWeight:700,color:"#1a1d2e"}}>Daray Shop</div>
+          <div style={{fontSize:14,color:"#888",marginTop:4}}>POS Management System</div>
+        </div>
+
+        {error && <div style={{background:"#fff0f0",border:"1px solid #fcc",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#ef4444",textAlign:"center"}}>{error}</div>}
+
+        <div style={{marginBottom:16}}>
+          <label style={{display:"block",fontSize:12,fontWeight:600,color:"#555",marginBottom:6}}>Username</label>
+          <input value={username} onChange={e=>setUsername(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&handleLogin()}
+            placeholder="Enter username"
+            style={{width:"100%",padding:"12px 14px",border:"1px solid #ddd",borderRadius:10,fontSize:14,boxSizing:"border-box",outline:"none"}}
+          />
+        </div>
+
+        <div style={{marginBottom:24}}>
+          <label style={{display:"block",fontSize:12,fontWeight:600,color:"#555",marginBottom:6}}>Password</label>
+          <div style={{position:"relative"}}>
+            <input value={password} onChange={e=>setPassword(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&handleLogin()}
+              type={showPass?"text":"password"}
+              placeholder="Enter password"
+              style={{width:"100%",padding:"12px 14px",border:"1px solid #ddd",borderRadius:10,fontSize:14,boxSizing:"border-box",outline:"none"}}
+            />
+            <button onClick={()=>setShowPass(s=>!s)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#888"}}>
+              {showPass?"🙈":"👁️"}
+            </button>
+          </div>
+        </div>
+
+        <button onClick={handleLogin} style={{width:"100%",background:"linear-gradient(135deg,#4f8cff,#a259f7)",color:"#fff",border:"none",borderRadius:12,padding:"14px",fontSize:16,fontWeight:700,cursor:"pointer"}}>
+          Sign In →
+        </button>
+
+        <div style={{marginTop:24,padding:"14px",background:"#f8f9fc",borderRadius:10,fontSize:12,color:"#888"}}>
+          <div style={{fontWeight:600,marginBottom:6,color:"#555"}}>Default Accounts:</div>
+          <div>👑 Admin: <strong>admin</strong> / <strong>admin123</strong></div>
+          <div style={{marginTop:4}}>💰 Cashier: <strong>cashier</strong> / <strong>cash123</strong></div>
+          <div style={{marginTop:6,fontSize:11,color:"#aaa"}}>Change passwords in Settings after login.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  const [loggedIn, setLoggedIn] = useState(()=>!!DB.get("session",null));
+  const [user, setUser] = useState(()=>DB.get("session",{name:"Admin User",role:"admin"}));
   const [page, setPage] = useState("dashboard");
   const [darkMode, setDarkMode] = useState(false);
-  const [user] = useState({name:"Admin User",role:"admin"});
   const [notification, setNotification] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => { seedData(); }, []);
+
+  const handleLogin = (u) => { setUser(u); setLoggedIn(true); };
+  const handleLogout = () => { DB.set("session",null); setLoggedIn(false); setPage("dashboard"); };
+
+  if(!loggedIn) return <LoginPage onLogin={handleLogin}/>;
 
   const notify = (msg, type="success") => {
     setNotification({msg,type});
@@ -174,6 +255,9 @@ export default function App() {
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             <button onClick={()=>setDarkMode(d=>!d)} style={{background:"none",border:"1px solid",borderColor:darkMode?"#333":"#e0e0e0",borderRadius:8,padding:"6px 12px",cursor:"pointer",color:"inherit",fontSize:13}}>
               {darkMode?"☀️ Light":"🌙 Dark"}
+            </button>
+            <button onClick={handleLogout} style={{background:"none",border:"1px solid #ef4444",borderRadius:8,padding:"6px 12px",cursor:"pointer",color:"#ef4444",fontSize:13,fontWeight:600}}>
+              🚪 Logout
             </button>
           </div>
         </div>
@@ -396,24 +480,147 @@ function Dashboard({darkMode}) {
         </div>
       </div>
 
-      {/* Payment breakdown */}
-      <div style={{...cardStyle,borderRadius:14,padding:20}}>
-        <div style={{fontWeight:700,fontSize:15,marginBottom:16}}>Payment Methods — This Month</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12}}>
-          {["Cash","ZAAD","eDahab","Bank Transfer"].map(m=>{
-            const total = monthSales.filter(s=>s.paymentMethod===m).reduce((a,s)=>a+s.total,0);
-            const count = monthSales.filter(s=>s.paymentMethod===m).length;
-            const colors = {Cash:"#22c55e",ZAAD:"#4f8cff",eDahab:"#f59e0b","Bank Transfer":"#06b6d4"};
-            const c = colors[m.replace(" Plus","")] || "#888";
-            return (
-              <div key={m} style={{background:c+"11",borderRadius:10,padding:"14px",border:`1px solid ${c}33`}}>
-                <div style={{fontSize:12,color:c,fontWeight:700}}>{m}</div>
-                <div style={{fontSize:18,fontWeight:700,margin:"6px 0",color:darkMode?"#e8eaf0":"#1a1d2e"}}>SOS {fmt(total)}</div>
-                <div style={{fontSize:11,color:"#888"}}>{count} transactions</div>
-              </div>
-            );
-          })}
+      {/* Charts Row */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:20}}>
+        {/* Weekly Sales Bar Chart */}
+        <div style={{...cardStyle,borderRadius:14,padding:20}}>
+          <div style={{fontWeight:700,fontSize:15,marginBottom:16}}>📊 Sales — Last 7 Days</div>
+          <WeeklyBarChart sales={sales} darkMode={darkMode}/>
         </div>
+        {/* Payment Methods Donut */}
+        <div style={{...cardStyle,borderRadius:14,padding:20}}>
+          <div style={{fontWeight:700,fontSize:15,marginBottom:16}}>💳 Payment Methods This Month</div>
+          <PaymentDonut sales={monthSales} darkMode={darkMode}/>
+        </div>
+      </div>
+
+      {/* Monthly Revenue Line */}
+      <div style={{...cardStyle,borderRadius:14,padding:20,marginBottom:20}}>
+        <div style={{fontWeight:700,fontSize:15,marginBottom:16}}>📈 Revenue vs Expenses — Last 6 Months</div>
+        <MonthlyLineChart sales={sales} expenses={expenses} darkMode={darkMode}/>
+      </div>
+    </div>
+  );
+}
+
+// ─── CHART COMPONENTS ─────────────────────────────────────────────────────
+function WeeklyBarChart({sales, darkMode}) {
+  const days = [];
+  for(let i=6;i>=0;i--) {
+    const d = new Date(); d.setDate(d.getDate()-i);
+    const key = d.toISOString().split("T")[0];
+    const label = d.toLocaleDateString("en-US",{weekday:"short"});
+    const rev = sales.filter(s=>s.date?.startsWith(key)).reduce((a,s)=>a+s.total,0);
+    const cost = sales.filter(s=>s.date?.startsWith(key)).reduce((a,s)=>a+s.items.reduce((b,i)=>b+(i.costPrice||0)*i.qty,0),0);
+    days.push({label, rev, profit: rev-cost});
+  }
+  const maxVal = Math.max(...days.map(d=>d.rev), 1);
+  const textC = darkMode?"#e8eaf0":"#1a1d2e";
+  const subC = "#888";
+
+  return (
+    <div style={{display:"flex",alignItems:"flex-end",gap:6,height:140,padding:"0 4px"}}>
+      {days.map((d,i)=>(
+        <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+          <div style={{fontSize:10,color:subC,fontWeight:600}}>{d.rev>0?fmt(d.rev/1000)+"k":""}</div>
+          <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",flex:1,gap:2}}>
+            <div style={{width:"100%",background:"#4f8cff",borderRadius:"4px 4px 0 0",height:`${Math.max(4,(d.rev/maxVal)*100)}%`,minHeight:d.rev>0?8:0,transition:"height 0.3s"}}/>
+          </div>
+          <div style={{fontSize:10,color:subC,fontWeight:600,textAlign:"center"}}>{d.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PaymentDonut({sales, darkMode}) {
+  const methods = ["Cash","ZAAD","eDahab","Bank Transfer","Split"];
+  const colors = {Cash:"#22c55e",ZAAD:"#4f8cff",eDahab:"#f59e0b","Bank Transfer":"#06b6d4",Split:"#a259f7"};
+  const data = methods.map(m=>({
+    m, total: sales.filter(s=>s.paymentMethod===m).reduce((a,s)=>a+s.total,0),
+    color: colors[m]
+  })).filter(d=>d.total>0);
+  const grandTotal = data.reduce((a,d)=>a+d.total,0);
+
+  if(grandTotal===0) return <div style={{textAlign:"center",color:"#bbb",padding:"30px 0",fontSize:13}}>No sales this month</div>;
+
+  let cumulative = 0;
+  const size = 120; const cx=60,cy=60,r=45,inner=28;
+  const slices = data.map(d=>{
+    const pct = d.total/grandTotal;
+    const start = cumulative; cumulative += pct;
+    const startAngle = start*2*Math.PI - Math.PI/2;
+    const endAngle = cumulative*2*Math.PI - Math.PI/2;
+    const x1=cx+r*Math.cos(startAngle),y1=cy+r*Math.sin(startAngle);
+    const x2=cx+r*Math.cos(endAngle),y2=cy+r*Math.sin(endAngle);
+    const xi1=cx+inner*Math.cos(startAngle),yi1=cy+inner*Math.sin(startAngle);
+    const xi2=cx+inner*Math.cos(endAngle),yi2=cy+inner*Math.sin(endAngle);
+    const large = pct>0.5?1:0;
+    return {...d, path:`M ${xi1} ${yi1} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${xi2} ${yi2} A ${inner} ${inner} 0 ${large} 0 ${xi1} ${yi1} Z`, pct};
+  });
+
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:20}}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{flexShrink:0}}>
+        {slices.map((s,i)=><path key={i} d={s.path} fill={s.color} opacity={0.9}/>)}
+        <text x={cx} y={cy-6} textAnchor="middle" fontSize="9" fill="#888">TOTAL</text>
+        <text x={cx} y={cy+8} textAnchor="middle" fontSize="10" fontWeight="700" fill={darkMode?"#fff":"#1a1d2e"}>{fmt(grandTotal/1000)}k</text>
+      </svg>
+      <div style={{flex:1}}>
+        {slices.map((s,i)=>(
+          <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:s.color}}/>
+              <span style={{fontSize:12,color:"#555"}}>{s.m}</span>
+            </div>
+            <span style={{fontSize:11,fontWeight:600,color:"#888"}}>{Math.round(s.pct*100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MonthlyLineChart({sales, expenses, darkMode}) {
+  const months = [];
+  for(let i=5;i>=0;i--) {
+    const d = new Date(); d.setMonth(d.getMonth()-i);
+    const key = d.toISOString().slice(0,7);
+    const label = d.toLocaleDateString("en-US",{month:"short"});
+    const rev = sales.filter(s=>s.date?.startsWith(key)).reduce((a,s)=>a+s.total,0);
+    const exp = expenses.filter(e=>e.date?.startsWith(key)).reduce((a,e)=>a+e.amount,0);
+    months.push({label,rev,exp});
+  }
+  const maxVal = Math.max(...months.map(m=>Math.max(m.rev,m.exp)),1);
+  const W=400,H=120,pad=32;
+  const pts = (arr,key) => arr.map((m,i)=>{
+    const x = pad + (i/(arr.length-1))*(W-pad*2);
+    const y = H - pad - (m[key]/maxVal)*(H-pad*2);
+    return [x,y];
+  });
+  const revPts = pts(months,"rev");
+  const expPts = pts(months,"exp");
+  const toPath = pts => pts.map((p,i)=>(i===0?"M":"L")+p[0]+","+p[1]).join(" ");
+  const toArea = (pts,h) => toPath(pts)+" L"+pts[pts.length-1][0]+","+(h-8)+" L"+pts[0][0]+","+(h-8)+" Z";
+  const subC = "#888";
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:H}}>
+        <defs>
+          <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#4f8cff" stopOpacity="0.3"/><stop offset="100%" stopColor="#4f8cff" stopOpacity="0"/></linearGradient>
+          <linearGradient id="expGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ef4444" stopOpacity="0.2"/><stop offset="100%" stopColor="#ef4444" stopOpacity="0"/></linearGradient>
+        </defs>
+        <path d={toArea(revPts,H)} fill="url(#revGrad)"/>
+        <path d={toArea(expPts,H)} fill="url(#expGrad)"/>
+        <path d={toPath(revPts)} fill="none" stroke="#4f8cff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d={toPath(expPts)} fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4,3"/>
+        {revPts.map(([x,y],i)=><circle key={i} cx={x} cy={y} r={4} fill="#4f8cff"/>)}
+        {months.map((m,i)=><text key={i} x={revPts[i][0]} y={H-4} textAnchor="middle" fontSize="10" fill={subC}>{m.label}</text>)}
+      </svg>
+      <div style={{display:"flex",gap:20,marginTop:8,justifyContent:"center"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#555"}}><div style={{width:20,height:3,background:"#4f8cff",borderRadius:2}}/> Revenue</div>
+        <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#555"}}><div style={{width:20,height:3,background:"#ef4444",borderRadius:2,borderTop:"2px dashed #ef4444"}}/> Expenses</div>
       </div>
     </div>
   );
@@ -548,13 +755,14 @@ function POS({notify, darkMode}) {
           ))}
         </div>
 
-        <div style={{padding:"16px 20px",borderTop:`1px solid ${s.border}`}}>
-          <Select label="Customer" value={selCustomer} onChange={e=>setSelCustomer(e.target.value)}>
-            <option value="">Walk-in Customer</option>
-            {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
-
-          <Input label="Discount %" type="number" value={discount} onChange={e=>setDiscount(Math.min(100,Math.max(0,+e.target.value)))} min="0" max="100"/>
+        <div style={{padding:"14px 16px",borderTop:`1px solid ${s.border}`,overflowY:"auto",maxHeight:360}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
+            <Select label="Customer" value={selCustomer} onChange={e=>setSelCustomer(e.target.value)}>
+              <option value="">Walk-in Customer</option>
+              {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+            <Input label="Discount %" type="number" value={discount} onChange={e=>setDiscount(Math.min(100,Math.max(0,+e.target.value)))} min="0" max="100"/>
+          </div>
 
           <div style={{marginBottom:12}}>
             <div style={{fontSize:12,fontWeight:600,color:"#555",marginBottom:8}}>Payment (split allowed)</div>
@@ -1367,6 +1575,20 @@ function Settings({notify, darkMode}) {
 
       <div style={{display:"flex",gap:12,marginBottom:20}}>
         <Btn onClick={save} style={{flex:1}}>💾 Save Settings</Btn>
+      </div>
+
+      <div style={s.section}>
+        <div style={{fontWeight:700,fontSize:16,marginBottom:20}}>🔐 User Accounts</div>
+        <div style={{fontSize:13,color:"#888",marginBottom:14}}>Default: admin/admin123 and cashier/cash123. Change them here.</div>
+        {DB.get("users",DEFAULT_USERS).map((u,i)=>(
+          <div key={u.id} style={{display:"flex",alignItems:"center",gap:12,marginBottom:12,padding:"12px 16px",background:"#f8f9fc",borderRadius:10}}>
+            <span style={{fontSize:20}}>{u.role==="admin"?"👑":"💰"}</span>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:14}}>{u.name}</div>
+              <div style={{fontSize:12,color:"#888"}}>{u.username} · {u.role}</div>
+            </div>
+          </div>
+        ))}
       </div>
 
       <div style={{...s.section,border:"1px solid #fcc"}}>
