@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import * as XLSX from "xlsx";
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, doc, setDoc, getDoc, onSnapshot, collection,
