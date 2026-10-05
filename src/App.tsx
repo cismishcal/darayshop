@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import * as XLSX from "xlsx";
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, doc, setDoc, getDoc, onSnapshot, collection,
@@ -180,12 +181,25 @@ export default function App() {
   const [page, setPage] = useState("dashboard");
   const [darkMode, setDarkMode] = useState(false);
   const [notification, setNotification] = useState(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
     setSyncing(true);
     seedData().then(() => setSyncing(false));
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) setSidebarOpen(true);
+      else setSidebarOpen(false);
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   const handleLogin = (u) => { setUser(u); setLoggedIn(true); };
@@ -210,77 +224,145 @@ export default function App() {
     { id: "settings", label: "Settings", icon: "⚙️" },
   ];
 
-  const styles = {
-    app: { display: "flex", height: "100vh", background: darkMode ? "#0f1117" : "#f4f5f7", color: darkMode ? "#e8eaf0" : "#1a1d2e", fontFamily: "'Outfit',system-ui,sans-serif", overflow: "hidden" },
-    sidebar: { width: sidebarOpen ? 220 : 60, background: "#1a1d2e", display: "flex", flexDirection: "column", transition: "width 0.2s", overflow: "hidden", flexShrink: 0 },
-    logo: { padding: "20px 16px 12px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: 8 },
-    navItem: (active) => ({ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", cursor: "pointer", borderRadius: 8, margin: "2px 8px", background: active ? "rgba(79,140,255,0.18)" : "transparent", color: active ? "#4f8cff" : "rgba(255,255,255,0.7)", fontSize: 13.5, fontWeight: active ? 600 : 400, transition: "all 0.15s", whiteSpace: "nowrap", overflow: "hidden" }),
-    main: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" },
-    topbar: { background: darkMode ? "#1a1d2e" : "#fff", borderBottom: darkMode ? "1px solid #262b40" : "1px solid #e8eaf0", padding: "12px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 },
-    content: { flex: 1, overflow: "auto", padding: "24px" },
-  };
+  // Bottom nav shows only the most important pages on mobile
+  const bottomNav = [
+    { id: "dashboard", label: "Home", icon: "📊" },
+    { id: "pos", label: "Sale", icon: "🛒" },
+    { id: "products", label: "Products", icon: "📦" },
+    { id: "reports", label: "Reports", icon: "📈" },
+    { id: "settings", label: "Settings", icon: "⚙️" },
+  ];
+
+  const bg = darkMode ? "#0f1117" : "#f4f5f7";
+  const cardBg = darkMode ? "#1a1d2e" : "#fff";
+  const borderColor = darkMode ? "#262b40" : "#e8eaf0";
+  const textColor = darkMode ? "#e8eaf0" : "#1a1d2e";
 
   return (
-    <div style={styles.app}>
-      {/* Sidebar */}
-      <div style={styles.sidebar}>
-        <div style={styles.logo}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => setSidebarOpen(o => !o)}>
-            <div style={{ width: 32, height: 32, background: "linear-gradient(135deg,#4f8cff,#a259f7)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>🏪</div>
-            {sidebarOpen && <div>
-              <div style={{ color: "#fff", fontWeight: 700, fontSize: 14, lineHeight: 1.2 }}>Daray Shop</div>
-              <div style={{ color: "rgba(255,255,255,0.45)", fontSize: 11 }}>POS System</div>
-            </div>}
+    <div style={{ display: "flex", height: "100vh", background: bg, color: textColor, fontFamily: "'Outfit',system-ui,sans-serif", overflow: "hidden", position: "relative" }}>
+
+      {/* Mobile overlay when sidebar is open */}
+      {isMobile && sidebarOpen && (
+        <div onClick={() => setSidebarOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 40 }} />
+      )}
+
+      {/* Sidebar — slides in on mobile, fixed on desktop */}
+      <div style={{
+        width: 220,
+        background: "#1a1d2e",
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+        zIndex: 50,
+        ...(isMobile ? {
+          position: "fixed",
+          top: 0, left: 0, bottom: 0,
+          transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
+          transition: "transform 0.25s ease",
+        } : {
+          position: "relative",
+          transform: "none",
+        })
+      }}>
+        {/* Logo */}
+        <div style={{ padding: "20px 16px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 36, height: 36, background: "linear-gradient(135deg,#4f8cff,#a259f7)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>🏪</div>
+            <div>
+              <div style={{ color: "#fff", fontWeight: 700, fontSize: 15, lineHeight: 1.2 }}>Daray Shop</div>
+              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11 }}>POS System</div>
+            </div>
           </div>
         </div>
-        {nav.map(n => (
-          <div key={n.id} style={styles.navItem(page === n.id)} onClick={() => setPage(n.id)}>
-            <span style={{ fontSize: 16, flexShrink: 0 }}>{n.icon}</span>
-            {sidebarOpen && <span>{n.label}</span>}
-          </div>
-        ))}
-        <div style={{ flex: 1 }} />
+
+        {/* Nav items */}
+        <div style={{ flex: 1, overflowY: "auto", paddingBottom: 8 }}>
+          {nav.map(n => (
+            <div key={n.id}
+              onClick={() => { setPage(n.id); if (isMobile) setSidebarOpen(false); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 12, padding: "11px 16px", cursor: "pointer",
+                borderRadius: 10, margin: "2px 8px",
+                background: page === n.id ? "rgba(79,140,255,0.18)" : "transparent",
+                color: page === n.id ? "#4f8cff" : "rgba(255,255,255,0.72)",
+                fontSize: 14, fontWeight: page === n.id ? 600 : 400, transition: "all 0.15s",
+              }}>
+              <span style={{ fontSize: 18 }}>{n.icon}</span>
+              <span>{n.label}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* User info + logout */}
         <div style={{ padding: "12px 8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-          <div style={styles.navItem(false)}>
-            <span style={{ fontSize: 16, flexShrink: 0 }}>👤</span>
-            {sidebarOpen && <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12, color: "#fff", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{user.name}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(79,140,255,0.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>👤</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: "#fff", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.name}</div>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{user.role}</div>
-            </div>}
+            </div>
+            <button onClick={handleLogout} title="Logout"
+              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "#ef4444", padding: 4, flexShrink: 0 }}>🚪</button>
           </div>
         </div>
       </div>
 
-      {/* Main */}
-      <div style={styles.main}>
-        <div style={styles.topbar}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ fontSize: 14, fontWeight: 600 }}>{nav.find(n => n.id === page)?.label}</div>
-            <div style={{ fontSize: 12, color: "#888", background: darkMode ? "#262b40" : "#f4f5f7", padding: "2px 10px", borderRadius: 20 }}>
-              {new Date().toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+      {/* Main content */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+
+        {/* Topbar */}
+        <div style={{
+          background: cardBg, borderBottom: `1px solid ${borderColor}`,
+          padding: isMobile ? "10px 14px" : "12px 24px",
+          display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
+          gap: 8,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+            {/* Hamburger — mobile only */}
+            {isMobile && (
+              <button onClick={() => setSidebarOpen(o => !o)}
+                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, padding: "2px 6px 2px 0", color: textColor, flexShrink: 0 }}>
+                ☰
+              </button>
+            )}
+            <div style={{ fontSize: isMobile ? 15 : 16, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {nav.find(n => n.id === page)?.icon} {nav.find(n => n.id === page)?.label}
             </div>
-            {syncing && <div style={{ fontSize: 11, color: "#f59e0b", background: "#fff9e6", padding: "2px 10px", borderRadius: 20 }}>🔄 Syncing...</div>}
-            <div style={{ fontSize: 11, color: "#22c55e", background: "#f0fff4", padding: "2px 10px", borderRadius: 20 }}>☁️ Firebase</div>
+            {syncing && <div style={{ fontSize: 11, color: "#f59e0b", background: "#fff9e6", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }}>🔄</div>}
+            {!isMobile && <div style={{ fontSize: 11, color: "#22c55e", background: "#f0fff4", padding: "2px 10px", borderRadius: 20, flexShrink: 0 }}>☁️ Firebase</div>}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <button onClick={() => setDarkMode(d => !d)} style={{ background: "none", border: "1px solid", borderColor: darkMode ? "#333" : "#e0e0e0", borderRadius: 8, padding: "6px 12px", cursor: "pointer", color: "inherit", fontSize: 13 }}>
-              {darkMode ? "☀️ Light" : "🌙 Dark"}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            {!isMobile && (
+              <div style={{ fontSize: 12, color: "#888", background: darkMode ? "#262b40" : "#f4f5f7", padding: "2px 10px", borderRadius: 20 }}>
+                {new Date().toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" })}
+              </div>
+            )}
+            <button onClick={() => setDarkMode(d => !d)}
+              style={{ background: "none", border: `1px solid ${borderColor}`, borderRadius: 8, padding: isMobile ? "5px 8px" : "6px 12px", cursor: "pointer", color: "inherit", fontSize: isMobile ? 15 : 13 }}>
+              {darkMode ? "☀️" : "🌙"}
             </button>
-            <button onClick={handleLogout} style={{ background: "none", border: "1px solid #ef4444", borderRadius: 8, padding: "6px 12px", cursor: "pointer", color: "#ef4444", fontSize: 13, fontWeight: 600 }}>
-              🚪 Logout
-            </button>
+            {!isMobile && (
+              <button onClick={handleLogout}
+                style={{ background: "none", border: "1px solid #ef4444", borderRadius: 8, padding: "6px 12px", cursor: "pointer", color: "#ef4444", fontSize: 13, fontWeight: 600 }}>
+                🚪 Logout
+              </button>
+            )}
           </div>
         </div>
 
+        {/* Notification toast */}
         {notification && (
-          <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, background: notification.type === "success" ? "#22c55e" : "#ef4444", color: "#fff", padding: "10px 20px", borderRadius: 10, fontWeight: 600, fontSize: 14, boxShadow: "0 4px 20px rgba(0,0,0,0.2)" }}>
+          <div style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: notification.type === "success" ? "#22c55e" : "#ef4444", color: "#fff", padding: "10px 22px", borderRadius: 24, fontWeight: 600, fontSize: 14, boxShadow: "0 4px 20px rgba(0,0,0,0.2)", whiteSpace: "nowrap" }}>
             {notification.msg}
           </div>
         )}
 
-        <div style={styles.content}>
-          {page === "dashboard" && <Dashboard darkMode={darkMode} />}
-          {page === "pos" && <POS notify={notify} darkMode={darkMode} />}
+        {/* Page content */}
+        <div style={{ flex: 1, overflow: "auto", padding: isMobile ? "14px 12px 80px" : "24px" }}>
+          {page === "dashboard" && <Dashboard darkMode={darkMode} isMobile={isMobile} />}
+          {page === "pos" && <POS notify={notify} darkMode={darkMode} isMobile={isMobile} />}
           {page === "products" && <Products notify={notify} darkMode={darkMode} />}
           {page === "purchases" && <Purchases notify={notify} darkMode={darkMode} />}
           {page === "expenses" && <Expenses notify={notify} darkMode={darkMode} />}
@@ -289,6 +371,32 @@ export default function App() {
           {page === "reports" && <Reports darkMode={darkMode} />}
           {page === "settings" && <Settings notify={notify} darkMode={darkMode} currentUser={user} onUserUpdate={(u) => { setUser(u); LOCAL.set("session", u); }} />}
         </div>
+
+        {/* Bottom navigation bar — mobile only */}
+        {isMobile && (
+          <div style={{
+            position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30,
+            background: "#1a1d2e",
+            borderTop: "1px solid rgba(255,255,255,0.08)",
+            display: "flex", alignItems: "center", justifyContent: "space-around",
+            padding: "8px 0 12px",
+            paddingBottom: "max(12px, env(safe-area-inset-bottom))",
+          }}>
+            {bottomNav.map(n => (
+              <button key={n.id} onClick={() => setPage(n.id)}
+                style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                  padding: "4px 12px",
+                  color: page === n.id ? "#4f8cff" : "rgba(255,255,255,0.5)",
+                  transition: "color 0.15s",
+                }}>
+                <span style={{ fontSize: 22 }}>{n.icon}</span>
+                <span style={{ fontSize: 10, fontWeight: page === n.id ? 700 : 400 }}>{n.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -362,7 +470,7 @@ function Table({ headers, rows, darkMode = false }) {
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({ darkMode }) {
+function Dashboard({ darkMode, isMobile = false }) {
   const [sales, setSales] = useState([]);
   const [products, setProducts] = useState([]);
   const [expenses, setExpenses] = useState([]);
@@ -421,7 +529,7 @@ function Dashboard({ darkMode }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20, marginBottom: 24 }}>
         <div style={{ ...cardStyle, borderRadius: 14, padding: 20 }}>
           <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 16 }}>Recent Transactions</div>
           {recentSales.length === 0 && <div style={{ color: "#bbb", fontSize: 14, textAlign: "center", padding: "20px 0" }}>No sales yet</div>}
@@ -579,7 +687,7 @@ function MonthlyLineChart({ sales, expenses, darkMode }) {
 }
 
 // ─── POS ──────────────────────────────────────────────────────────────────────
-function POS({ notify, darkMode }) {
+function POS({ notify, darkMode, isMobile = false }) {
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [cart, setCart] = useState([]);
@@ -649,10 +757,24 @@ function POS({ notify, darkMode }) {
   };
 
   const s = { bg: darkMode ? "#1a1d2e" : "#fff", border: darkMode ? "#262b40" : "#e8eaf0", text: darkMode ? "#e8eaf0" : "#1a1d2e" };
+  const [mobileTab, setMobileTab] = useState<"products"|"cart">("products");
 
   return (
-    <div style={{ display: "flex", gap: 16, height: "calc(100vh - 110px)", minHeight: 0 }}>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+    <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 0 : 16, height: isMobile ? "auto" : "calc(100vh - 110px)", minHeight: 0 }}>
+
+      {/* Mobile tab switcher */}
+      {isMobile && (
+        <div style={{ display: "flex", background: s.bg, borderRadius: 12, padding: 4, marginBottom: 12, border: `1px solid ${s.border}` }}>
+          <button onClick={() => setMobileTab("products")} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 14, background: mobileTab === "products" ? "#4f8cff" : "transparent", color: mobileTab === "products" ? "#fff" : "#888", transition: "all 0.15s" }}>
+            🛍️ Products
+          </button>
+          <button onClick={() => setMobileTab("cart")} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 14, background: mobileTab === "cart" ? "#4f8cff" : "transparent", color: mobileTab === "cart" ? "#fff" : "#888", transition: "all 0.15s", position: "relative" }}>
+            🛒 Cart {cart.length > 0 && <span style={{ background: "#ef4444", color: "#fff", borderRadius: "50%", fontSize: 11, fontWeight: 700, padding: "1px 6px", marginLeft: 4 }}>{cart.length}</span>}
+          </button>
+        </div>
+      )}
+
+      <div style={{ flex: 1, display: isMobile && mobileTab !== "products" ? "none" : "flex", flexDirection: "column", minWidth: 0 }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Search products or scan barcode..."
           style={{ padding: "12px 16px", borderRadius: 10, border: `1px solid ${s.border}`, fontSize: 14, marginBottom: 16, background: s.bg, color: s.text, outline: "none", width: "100%", boxSizing: "border-box" }} />
         <div style={{ flex: 1, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: 12, alignContent: "start" }}>
@@ -669,7 +791,7 @@ function POS({ notify, darkMode }) {
         </div>
       </div>
 
-      <div style={{ width: 480, display: "flex", flexDirection: "column", background: s.bg, border: `1px solid ${s.border}`, borderRadius: 16, overflow: "hidden", flexShrink: 0 }}>
+      <div style={{ width: isMobile ? "100%" : 480, display: isMobile && mobileTab !== "cart" ? "none" : "flex", flexDirection: "column", background: s.bg, border: `1px solid ${s.border}`, borderRadius: 16, overflow: "hidden", flexShrink: 0 }}>
         <div style={{ padding: "18px 20px", borderBottom: `1px solid ${s.border}`, fontWeight: 700, fontSize: 17 }}>🛒 Cart — {cart.length} items</div>
         <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px", minHeight: 0 }}>
           {cart.length === 0 && <div style={{ textAlign: "center", color: "#bbb", padding: "40px 0", fontSize: 14 }}>Tap products to add them</div>}
@@ -783,6 +905,10 @@ function Products({ notify, darkMode }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: "", barcode: "", category: "", brand: "", costPrice: "", sellingPrice: "", quantity: "", reorderLevel: "", supplier: "", image: "📦", description: "" });
+  const [showImportPreview, setShowImportPreview] = useState(false);
+  const [importRows, setImportRows] = useState([]);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const u1 = FDB.subscribe("products", setProducts);
@@ -813,15 +939,149 @@ function Products({ notify, darkMode }) {
     setEditing(p.id); setShowForm(true);
   };
 
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const wb = XLSX.read(evt.target?.result, { type: "binary" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+        if (rows.length === 0) { notify("Excel file is empty", "error"); return; }
+        // Map columns flexibly (case-insensitive)
+        const mapped = rows.map(row => {
+          const get = (...keys) => {
+            for (const k of keys) {
+              const found = Object.keys(row).find(rk => rk.toLowerCase().replace(/\s/g,"") === k.toLowerCase().replace(/\s/g,""));
+              if (found && row[found] !== "") return String(row[found]);
+            }
+            return "";
+          };
+          return {
+            id: genId(),
+            name: get("name","productname","product"),
+            barcode: get("barcode","code","sku"),
+            brand: get("brand","make"),
+            category: get("category","cat"),
+            costPrice: +get("costprice","cost","buyprice","purchaseprice") || 0,
+            sellingPrice: +get("sellingprice","price","saleprice","sell") || 0,
+            quantity: +get("quantity","qty","stock","instock") || 0,
+            reorderLevel: +get("reorderlevel","reorder","minstock","minimum") || 5,
+            supplier: get("supplier","vendor"),
+            image: get("image","emoji","icon") || "📦",
+            description: get("description","desc","notes") || "",
+            dateAdded: now(),
+          };
+        }).filter(p => p.name);
+        if (mapped.length === 0) { notify("No valid products found. Make sure your file has a 'Name' column.", "error"); return; }
+        setImportRows(mapped);
+        setShowImportPreview(true);
+      } catch (err) {
+        notify("Could not read file. Please use .xlsx or .csv format", "error");
+      }
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = "";
+  };
+
+  const confirmImport = async (mode: "add" | "replace") => {
+    setImporting(true);
+    try {
+      let updated;
+      if (mode === "replace") {
+        updated = importRows;
+      } else {
+        // Add new, skip duplicates by name
+        const existingNames = products.map(p => p.name.toLowerCase());
+        const newOnes = importRows.filter(p => !existingNames.includes(p.name.toLowerCase()));
+        updated = [...products, ...newOnes];
+        notify(`Imported ${newOnes.length} new products (${importRows.length - newOnes.length} duplicates skipped) ✓`);
+      }
+      await FDB.set("products", updated);
+      if (mode === "replace") notify(`Replaced all products with ${importRows.length} imported products ✓`);
+      setShowImportPreview(false);
+      setImportRows([]);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const downloadTemplate = () => {
+    const ws = XLSX.utils.json_to_sheet([
+      { Name: "Example Product", Barcode: "001", Brand: "BrandName", Category: "Food & Beverages", CostPrice: 5000, SellingPrice: 8000, Quantity: 50, ReorderLevel: 10, Supplier: "Supplier Name", Image: "📦" },
+      { Name: "Rice 50kg", Barcode: "002", Brand: "Golden", Category: "Food & Beverages", CostPrice: 85000, SellingPrice: 110000, Quantity: 20, ReorderLevel: 5, Supplier: "Daallo Trading", Image: "🌾" },
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Products");
+    XLSX.writeFile(wb, "daray-shop-products-template.xlsx");
+  };
+
   const filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search));
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <input type="file" ref={fileInputRef} accept=".xlsx,.xls,.csv" onChange={handleFileUpload} style={{ display: "none" }} />
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Search products..."
-          style={{ padding: "10px 16px", border: "1px solid #e0e0e0", borderRadius: 10, fontSize: 14, width: 300, outline: "none" }} />
-        <Btn onClick={() => { setShowForm(true); setEditing(null); }}>+ Add Product</Btn>
+          style={{ padding: "10px 16px", border: "1px solid #e0e0e0", borderRadius: 10, fontSize: 14, width: 280, outline: "none" }} />
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <Btn onClick={downloadTemplate} color="#888" variant="outline" size="sm">📥 Download Template</Btn>
+          <Btn onClick={() => fileInputRef.current?.click()} color="#22c55e" size="sm">📂 Import Excel / CSV</Btn>
+          <Btn onClick={() => { setShowForm(true); setEditing(null); }}>+ Add Product</Btn>
+        </div>
       </div>
+
+      {/* Import Preview Modal */}
+      {showImportPreview && (
+        <Modal title={`Preview — ${importRows.length} products found`} onClose={() => { setShowImportPreview(false); setImportRows([]); }} width={700}>
+          <div style={{ background: "#f0f8ff", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#1e40af" }}>
+            ℹ️ Found <strong>{importRows.length} products</strong> in your file. Choose how to import them:
+          </div>
+          <div style={{ maxHeight: 300, overflowY: "auto", border: "1px solid #e0e0e0", borderRadius: 10, marginBottom: 16 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead style={{ background: "#f8f9fc", position: "sticky", top: 0 }}>
+                <tr>
+                  {["#","Name","Barcode","Brand","Cost","Selling","Qty","Reorder"].map(h => (
+                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#888", borderBottom: "1px solid #e0e0e0" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {importRows.map((p, i) => (
+                  <tr key={i} style={{ borderBottom: "1px solid #f0f1f5" }}>
+                    <td style={{ padding: "7px 10px", color: "#888" }}>{i + 1}</td>
+                    <td style={{ padding: "7px 10px", fontWeight: 600 }}>{p.image} {p.name}</td>
+                    <td style={{ padding: "7px 10px", color: "#888" }}>{p.barcode || "—"}</td>
+                    <td style={{ padding: "7px 10px" }}>{p.brand || "—"}</td>
+                    <td style={{ padding: "7px 10px" }}>SOS {fmt(p.costPrice)}</td>
+                    <td style={{ padding: "7px 10px", color: "#22c55e", fontWeight: 600 }}>SOS {fmt(p.sellingPrice)}</td>
+                    <td style={{ padding: "7px 10px" }}>{p.quantity}</td>
+                    <td style={{ padding: "7px 10px" }}>{p.reorderLevel}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div style={{ background: "#f0fff4", border: "1px solid #d1fae5", borderRadius: 10, padding: 14 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "#065f46", marginBottom: 6 }}>➕ Add to existing</div>
+              <div style={{ fontSize: 12, color: "#047857", marginBottom: 12 }}>New products will be added. Duplicate names will be skipped.</div>
+              <Btn onClick={() => confirmImport("add")} color="#22c55e" style={{ width: "100%" }}>
+                {importing ? "Importing..." : "Add Products"}
+              </Btn>
+            </div>
+            <div style={{ background: "#fff3f3", border: "1px solid #fcc", borderRadius: 10, padding: 14 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "#991b1b", marginBottom: 6 }}>🔄 Replace all</div>
+              <div style={{ fontSize: 12, color: "#b91c1c", marginBottom: 12 }}>All existing products will be deleted and replaced with these.</div>
+              <Btn onClick={() => { if(confirm("This will delete ALL existing products. Are you sure?")) confirmImport("replace"); }} color="#ef4444" style={{ width: "100%" }}>
+                {importing ? "Importing..." : "Replace All"}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e8eaf0", overflow: "hidden" }}>
         <Table headers={["", "Name", "Category", "Cost", "Selling", "Stock", "Status", "Actions"]} rows={filtered.map(p => [
           <span style={{ fontSize: 22 }}>{p.image || "📦"}</span>,
