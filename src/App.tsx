@@ -723,7 +723,7 @@ function POS({ notify, darkMode, isMobile = false, user = { role: "cashier" } as
     setCart(c => {
       const ex = c.find(i => i.productId === p.id);
       if (ex) return c.map(i => i.productId === p.id ? { ...i, qty: i.qty + 1 } : i);
-      return [...c, { productId: p.id, name: p.name, price: p.sellingPrice, costPrice: p.costPrice, qty: 1, image: p.image }];
+      return [...c, { productId: p.id, name: p.name, price: p.sellingPrice, costPrice: costOf(p, rate), qty: 1, image: p.image }];
     });
   };
 
@@ -959,6 +959,34 @@ function Receipt({ sale, onClose }) {
 }
 
 // ─── PRODUCTS ────────────────────────────────────────────────────────────────
+const EMPTY_PRODUCT_FORM = { name: "", barcode: "", category: "", brand: "", costPrice: "", sellingPrice: "", quantity: "", reorderLevel: "", supplier: "", image: "📦", description: "", costCur: "SOS", sellCur: "SOS" };
+
+// Cost of a product in SOS. Products bought in USD follow the current exchange rate.
+const costOf = (p: any, rate: number) => (p.costUSD > 0 && rate > 0) ? Math.round(p.costUSD * rate) : (p.costPrice || 0);
+
+function PriceField({ label, value, onChange, cur, onCur, rate }) {
+  const n = parseFloat(value) || 0;
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>{label}</label>
+        <div style={{ display: "flex", border: "1px solid #ddd", borderRadius: 6, overflow: "hidden" }}>
+          {["SOS", "USD"].map(c => (
+            <button key={c} type="button" onClick={() => onCur(c)}
+              style={{ padding: "2px 9px", fontSize: 11, fontWeight: 700, border: "none", cursor: "pointer", background: cur === c ? (c === "USD" ? "#14b8a6" : "#4f8cff") : "#fff", color: cur === c ? "#fff" : "#888" }}>{c}</button>
+          ))}
+        </div>
+      </div>
+      <input type="number" min="0" step={cur === "USD" ? "0.01" : "1"} value={value} onChange={e => onChange(e.target.value)}
+        placeholder={cur === "USD" ? "Amount in $" : "Amount in SOS"}
+        style={{ width: "100%", padding: "9px 12px", border: `1px solid ${cur === "USD" ? "#14b8a6" : "#ddd"}`, borderRadius: 8, fontSize: 14, boxSizing: "border-box", outline: "none" }} />
+      {cur === "USD" && n > 0 && (rate > 0
+        ? <div style={{ fontSize: 12, fontWeight: 600, color: "#0f766e", marginTop: 4 }}>${n.toFixed(2)} = SOS {fmt(n * rate)}</div>
+        : <div style={{ fontSize: 12, color: "#b45309", marginTop: 4 }}>⚠️ Set today's USD rate first (Settings or POS)</div>)}
+    </div>
+  );
+}
+
 function Products({ notify, darkMode }) {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -966,24 +994,49 @@ function Products({ notify, darkMode }) {
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: "", barcode: "", category: "", brand: "", costPrice: "", sellingPrice: "", quantity: "", reorderLevel: "", supplier: "", image: "📦", description: "" });
+  const [form, setForm] = useState({ ...EMPTY_PRODUCT_FORM });
+  const [rate, setRate] = useState(0);
 
   useEffect(() => {
     const u1 = FDB.subscribe("products", setProducts);
     const u2 = FDB.subscribe("categories", setCategories);
     const u3 = FDB.subscribe("suppliers", setSuppliers);
-    return () => { u1(); u2(); u3(); };
+    const u4 = FDB.subscribe("settings", (st) => setRate(+st?.usdRate || 0));
+    return () => { u1(); u2(); u3(); u4(); };
   }, []);
+
+  // Switching SOS <-> USD converts the number already typed so the value stays the same
+  const switchCur = (field: "costPrice" | "sellingPrice", curField: "costCur" | "sellCur", newCur: string) => {
+    if (form[curField] === newCur) return;
+    const n = parseFloat(form[field]);
+    let v = form[field];
+    if (n && rate) v = newCur === "USD" ? String(Math.round((n / rate) * 100) / 100) : String(Math.round(n * rate));
+    setForm({ ...form, [curField]: newCur, [field]: v });
+  };
+
+  const costSOS = form.costCur === "USD" ? (+form.costPrice || 0) * rate : (+form.costPrice || 0);
+  const sellSOS = form.sellCur === "USD" ? (+form.sellingPrice || 0) * rate : (+form.sellingPrice || 0);
+  const unitProfit = sellSOS - costSOS;
+  const margin = sellSOS > 0 ? (unitProfit / sellSOS) * 100 : 0;
 
   const save = async () => {
     if (!form.name || !form.sellingPrice) { notify("Name and selling price required", "error"); return; }
-    const p = { ...form, costPrice: +form.costPrice, sellingPrice: +form.sellingPrice, quantity: +form.quantity, reorderLevel: +form.reorderLevel };
+    if ((form.costCur === "USD" || form.sellCur === "USD") && !rate) { notify("Set today's USD exchange rate first (Settings)", "error"); return; }
+    const { costCur, sellCur, ...rest } = form;
+    const costIn = +form.costPrice || 0, sellIn = +form.sellingPrice || 0;
+    const p = {
+      ...rest,
+      costPrice: costCur === "USD" ? Math.round(costIn * rate) : costIn,   // SOS value at today's rate
+      costUSD: costCur === "USD" ? costIn : 0,                             // original USD cost (kept so cost follows the rate)
+      sellingPrice: sellCur === "USD" ? Math.round(sellIn * rate) : sellIn, // always stored in SOS
+      quantity: +form.quantity, reorderLevel: +form.reorderLevel,
+    };
     let updated;
     if (editing) { updated = products.map(x => x.id === editing ? { ...x, ...p } : x); notify("Product updated ✓"); }
     else { updated = [...products, { ...p, id: genId(), dateAdded: now() }]; notify("Product added ✓"); }
     await FDB.set("products", updated);
     setShowForm(false); setEditing(null);
-    setForm({ name: "", barcode: "", category: "", brand: "", costPrice: "", sellingPrice: "", quantity: "", reorderLevel: "", supplier: "", image: "📦", description: "" });
+    setForm({ ...EMPTY_PRODUCT_FORM });
   };
 
   const del = async (id) => {
@@ -993,7 +1046,8 @@ function Products({ notify, darkMode }) {
   };
 
   const edit = (p) => {
-    setForm({ ...p, costPrice: String(p.costPrice), sellingPrice: String(p.sellingPrice), quantity: String(p.quantity), reorderLevel: String(p.reorderLevel) });
+    const usdCost = p.costUSD > 0;
+    setForm({ ...p, costPrice: String(usdCost ? p.costUSD : p.costPrice), sellingPrice: String(p.sellingPrice), quantity: String(p.quantity), reorderLevel: String(p.reorderLevel), costCur: usdCost ? "USD" : "SOS", sellCur: "SOS" });
     setEditing(p.id); setShowForm(true);
   };
 
@@ -1005,7 +1059,7 @@ function Products({ notify, darkMode }) {
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Search products..."
           style={{ padding: "10px 16px", border: "1px solid #e0e0e0", borderRadius: 10, fontSize: 14, width: 280, outline: "none" }} />
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <Btn onClick={() => { setShowForm(true); setEditing(null); }}>+ Add Product</Btn>
+          <Btn onClick={() => { setForm({ ...EMPTY_PRODUCT_FORM }); setShowForm(true); setEditing(null); }}>+ Add Product</Btn>
         </div>
       </div>
 
@@ -1014,7 +1068,7 @@ function Products({ notify, darkMode }) {
           <span style={{ fontSize: 22 }}>{p.image || "📦"}</span>,
           <div><div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div><div style={{ fontSize: 11, color: "#888" }}>{p.barcode}</div></div>,
           <Badge label={categories.find(c => c.id === p.category)?.name || "—"} color="#a259f7" />,
-          <span style={{ fontSize: 13 }}>SOS {fmt(p.costPrice)}</span>,
+          <div><span style={{ fontSize: 13 }}>SOS {fmt(costOf(p, rate))}</span>{p.costUSD > 0 && <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 600 }}>${Number(p.costUSD).toFixed(2)}</div>}</div>,
           <span style={{ fontSize: 13, fontWeight: 600 }}>SOS {fmt(p.sellingPrice)}</span>,
           <span style={{ fontWeight: 600, color: p.quantity <= p.reorderLevel ? "#ef4444" : p.quantity <= p.reorderLevel * 2 ? "#f59e0b" : "#22c55e" }}>{p.quantity}</span>,
           p.quantity === 0 ? <Badge label="Out of Stock" color="#ef4444" /> : p.quantity <= p.reorderLevel ? <Badge label="Low Stock" color="#f59e0b" /> : <Badge label="In Stock" color="#22c55e" />,
@@ -1039,11 +1093,23 @@ function Products({ notify, darkMode }) {
               <option value="">Select supplier</option>
               {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </Select>
-            <Input label="Cost Price (SOS)" type="number" value={form.costPrice} onChange={e => setForm({ ...form, costPrice: e.target.value })} />
-            <Input label="Selling Price (SOS) *" type="number" value={form.sellingPrice} onChange={e => setForm({ ...form, sellingPrice: e.target.value })} />
+            <PriceField label="Cost Price" value={form.costPrice} cur={form.costCur} rate={rate}
+              onChange={v => setForm({ ...form, costPrice: v })} onCur={c => switchCur("costPrice", "costCur", c)} />
+            <PriceField label="Selling Price *" value={form.sellingPrice} cur={form.sellCur} rate={rate}
+              onChange={v => setForm({ ...form, sellingPrice: v })} onCur={c => switchCur("sellingPrice", "sellCur", c)} />
             <Input label="Quantity" type="number" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} />
             <Input label="Reorder Level" type="number" value={form.reorderLevel} onChange={e => setForm({ ...form, reorderLevel: e.target.value })} />
           </div>
+          {costSOS > 0 && sellSOS > 0 && (
+            <div style={{ background: unitProfit >= 0 ? "#f0fdf4" : "#fff1f2", border: `1px solid ${unitProfit >= 0 ? "#bbf7d0" : "#fecdd3"}`, borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+                <span>Cost: <strong>SOS {fmt(costSOS)}</strong></span>
+                <span>Selling: <strong>SOS {fmt(sellSOS)}</strong></span>
+                <span style={{ color: unitProfit >= 0 ? "#15803d" : "#e11d48", fontWeight: 700 }}>Profit: SOS {fmt(unitProfit)} ({margin.toFixed(0)}%)</span>
+              </div>
+              {form.costCur === "USD" && <div style={{ fontSize: 11, color: "#0f766e", marginTop: 6 }}>💵 Cost is tracked in USD — it updates automatically whenever the admin changes the exchange rate.</div>}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
             <Btn onClick={() => { setShowForm(false); setEditing(null); }} color="#888" variant="outline">Cancel</Btn>
             <Btn onClick={save}>{editing ? "Update" : "Add Product"}</Btn>
@@ -1398,13 +1464,15 @@ function Reports({ darkMode }) {
   const [expenses, setExpenses] = useState([]);
   const [products, setProducts] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  const [rate, setRate] = useState(0);
 
   useEffect(() => {
     const u1 = FDB.subscribe("sales", setSales);
     const u2 = FDB.subscribe("expenses", setExpenses);
     const u3 = FDB.subscribe("products", setProducts);
     const u4 = FDB.subscribe("purchases", setPurchases);
-    return () => { u1(); u2(); u3(); u4(); };
+    const u5 = FDB.subscribe("settings", (st) => setRate(+st?.usdRate || 0));
+    return () => { u1(); u2(); u3(); u4(); u5(); };
   }, []);
 
   const now2 = new Date();
@@ -1431,7 +1499,7 @@ function Reports({ darkMode }) {
   const totalExpenses = filterExpenses.reduce((a, e) => a + e.amount, 0);
   const netProfit = grossProfit - totalExpenses;
   const grossMargin = revenue > 0 ? (grossProfit / revenue * 100).toFixed(1) : 0;
-  const stockValue = products.reduce((a, p) => a + p.quantity * p.costPrice, 0);
+  const stockValue = products.reduce((a, p) => a + p.quantity * costOf(p, rate), 0);
   const stockRetailValue = products.reduce((a, p) => a + p.quantity * p.sellingPrice, 0);
   const periodLabel = { today: "Today", week: "This Week", month: "This Month", year: "This Year" }[period];
   const cardS = { background: darkMode ? "#1a1d2e" : "#fff", border: `1px solid ${darkMode ? "#262b40" : "#e8eaf0"}`, borderRadius: 14, padding: 20 };
