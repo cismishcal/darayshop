@@ -361,7 +361,7 @@ export default function App() {
         {/* Page content */}
         <div style={{ flex: 1, overflow: "auto", padding: isMobile ? "14px 12px 80px" : "24px" }}>
           {page === "dashboard" && <Dashboard darkMode={darkMode} isMobile={isMobile} />}
-          {page === "pos" && <POS notify={notify} darkMode={darkMode} isMobile={isMobile} />}
+          {page === "pos" && <POS notify={notify} darkMode={darkMode} isMobile={isMobile} user={user} />}
           {page === "products" && <Products notify={notify} darkMode={darkMode} />}
           {page === "purchases" && <Purchases notify={notify} darkMode={darkMode} />}
           {page === "expenses" && <Expenses notify={notify} darkMode={darkMode} />}
@@ -607,8 +607,8 @@ function WeeklyBarChart({ sales, darkMode }) {
 }
 
 function PaymentDonut({ sales, darkMode }) {
-  const methods = ["Cash", "ZAAD", "eDahab", "Bank Transfer", "Split"];
-  const colors = { Cash: "#22c55e", ZAAD: "#4f8cff", eDahab: "#f59e0b", "Bank Transfer": "#06b6d4", Split: "#a259f7" };
+  const methods = ["Cash", "USD", "ZAAD", "eDahab", "Bank Transfer", "Split"];
+  const colors = { Cash: "#22c55e", USD: "#14b8a6", ZAAD: "#4f8cff", eDahab: "#f59e0b", "Bank Transfer": "#06b6d4", Split: "#a259f7" };
   const data = methods.map(m => ({ m, total: sales.filter(s => s.paymentMethod === m).reduce((a, s) => a + s.total, 0), color: colors[m] })).filter(d => d.total > 0);
   const grandTotal = data.reduce((a, d) => a + d.total, 0);
   if (grandTotal === 0) return <div style={{ textAlign: "center", color: "#bbb", padding: "30px 0", fontSize: 13 }}>No sales this month</div>;
@@ -686,21 +686,36 @@ function MonthlyLineChart({ sales, expenses, darkMode }) {
 }
 
 // ─── POS ──────────────────────────────────────────────────────────────────────
-function POS({ notify, darkMode, isMobile = false }) {
+function POS({ notify, darkMode, isMobile = false, user = { role: "cashier" } as any }) {
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [cart, setCart] = useState([]);
   const [search, setSearch] = useState("");
   const [discount, setDiscount] = useState(0);
-  const [payments, setPayments] = useState({ Cash: "0", ZAAD: "0", eDahab: "0", "Bank Transfer": "0" });
+  const [payments, setPayments] = useState({ Cash: "0", USD: "0", ZAAD: "0", eDahab: "0", "Bank Transfer": "0" });
   const [selCustomer, setSelCustomer] = useState("");
   const [showReceipt, setShowReceipt] = useState(null);
+  const [rate, setRate] = useState(0);            // SOS per 1 USD
+  const [rateDate, setRateDate] = useState("");
+  const [editingRate, setEditingRate] = useState(false);
+  const [rateInput, setRateInput] = useState("");
 
   useEffect(() => {
     const unsub1 = FDB.subscribe("products", setProducts);
     const unsub2 = FDB.subscribe("customers", setCustomers);
-    return () => { unsub1(); unsub2(); };
+    const unsub3 = FDB.subscribe("settings", (st) => { setRate(+st?.usdRate || 0); setRateDate(st?.usdRateDate || ""); });
+    return () => { unsub1(); unsub2(); unsub3(); };
   }, []);
+
+  const rateIsToday = !!rateDate && new Date(rateDate).toDateString() === new Date().toDateString();
+  const saveRate = async () => {
+    const r = parseFloat(rateInput);
+    if (!r || r <= 0) { notify("Enter a valid exchange rate", "error"); return; }
+    const existing = await FDB.get("settings", {});
+    await FDB.set("settings", { ...existing, usdRate: r, usdRateDate: now() });
+    setEditingRate(false);
+    notify("Exchange rate updated ✓");
+  };
 
   const filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search));
 
@@ -720,23 +735,28 @@ function POS({ notify, darkMode, isMobile = false }) {
   const subtotal = cart.reduce((a, i) => a + i.price * i.qty, 0);
   const discountAmt = Math.round(subtotal * discount / 100);
   const total = subtotal - discountAmt;
-  const METHODS = ["Cash", "ZAAD", "eDahab", "Bank Transfer"];
-  const COLORS = { Cash: "#22c55e", ZAAD: "#4f8cff", eDahab: "#f59e0b", "Bank Transfer": "#06b6d4" };
-  const totalPaid = METHODS.reduce((a, m) => a + (parseFloat(payments[m]) || 0), 0);
+  const METHODS = ["Cash", "USD", "ZAAD", "eDahab", "Bank Transfer"];
+  const COLORS = { Cash: "#22c55e", USD: "#14b8a6", ZAAD: "#4f8cff", eDahab: "#f59e0b", "Bank Transfer": "#06b6d4" };
+  // Every amount is converted to SOS; USD is entered in dollars and multiplied by the day's rate
+  const amtSOS = (m) => { const v = parseFloat(payments[m]) || 0; return m === "USD" ? v * rate : v; };
+  const usdAmt = parseFloat(payments.USD) || 0;
+  const totalPaid = METHODS.reduce((a, m) => a + amtSOS(m), 0);
   const change = Math.max(0, totalPaid - total);
   const remaining = Math.max(0, total - totalPaid);
 
   const completeSale = async () => {
     if (cart.length === 0) { notify("Cart is empty", "error"); return; }
     if (totalPaid < total) { notify("Payment is less than total", "error"); return; }
+    if (usdAmt > 0 && !rate) { notify("Set today's USD exchange rate first", "error"); return; }
     const paymentBreakdown: any = {};
-    METHODS.forEach(m => { if ((parseFloat(payments[m]) || 0) > 0) paymentBreakdown[m] = parseFloat(payments[m]); });
+    METHODS.forEach(m => { const v = amtSOS(m); if (v > 0) paymentBreakdown[m] = v; });
     const sale = {
       id: genId(), date: now(),
       items: cart.map(i => ({ ...i })),
       subtotal, discount, discountAmt, total,
       paymentMethod: Object.keys(paymentBreakdown).length === 1 ? Object.keys(paymentBreakdown)[0] : "Split",
       paymentBreakdown, totalPaid, change,
+      usdPaid: usdAmt, usdRate: usdAmt > 0 ? rate : null,
       customer: selCustomer ? customers.find(c => c.id === selCustomer)?.name : "Walk-in",
       customerId: selCustomer || null,
     };
@@ -750,7 +770,7 @@ function POS({ notify, darkMode, isMobile = false }) {
     await FDB.set("products", prods);
     setShowReceipt(sale);
     setCart([]); setDiscount(0);
-    setPayments({ Cash: "0", ZAAD: "0", eDahab: "0", "Bank Transfer": "0" });
+    setPayments({ Cash: "0", USD: "0", ZAAD: "0", eDahab: "0", "Bank Transfer": "0" });
     setSelCustomer("");
     notify("Sale completed! ✓");
   };
@@ -819,24 +839,65 @@ function POS({ notify, darkMode, isMobile = false }) {
             </Select>
             <Input label="Discount %" type="number" value={discount} onChange={e => setDiscount(Math.min(100, Math.max(0, +e.target.value)))} min="0" max="100" />
           </div>
+          {/* USD exchange rate bar */}
+          <div style={{ background: rate && rateIsToday ? "#f0fdfa" : "#fffbeb", border: `1px solid ${rate && rateIsToday ? "#99f6e4" : "#fde68a"}`, borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>
+            {editingRate ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>1 USD = SOS</span>
+                <input type="number" min="0" autoFocus value={rateInput} onChange={e => setRateInput(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && saveRate()}
+                  style={{ flex: 1, minWidth: 0, padding: "5px 8px", border: "1px solid #14b8a6", borderRadius: 8, fontSize: 13, outline: "none" }} />
+                <Btn size="sm" color="#14b8a6" onClick={saveRate}>Save</Btn>
+                <Btn size="sm" color="#888" variant="outline" onClick={() => setEditingRate(false)}>✕</Btn>
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ fontSize: 12 }}>
+                  <span style={{ fontWeight: 700, color: "#0f766e" }}>💵 1 USD = {rate ? `SOS ${fmt(rate)}` : "not set"}</span>
+                  <div style={{ fontSize: 11, color: rate && rateIsToday ? "#888" : "#b45309" }}>
+                    {!rate ? (user.role === "admin" ? "Set today's rate to accept USD" : "Ask the admin to set today's rate")
+                      : rateIsToday ? "Updated today" : "⚠️ Not updated today — check the rate"}
+                  </div>
+                </div>
+                {user.role === "admin" && <Btn size="sm" color="#14b8a6" variant="outline" onClick={() => { setRateInput(rate ? String(rate) : ""); setEditingRate(true); }}>Edit rate</Btn>}
+              </div>
+            )}
+          </div>
           <div style={{ marginBottom: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 8 }}>Payment (split allowed)</div>
-            {METHODS.map(m => (
-              <div key={m} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <div style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS[m], flexShrink: 0 }} />
-                <span style={{ fontSize: 12, fontWeight: 600, width: 90, flexShrink: 0, color: "#555" }}>{m}</span>
-                <input type="number" min="0" value={payments[m]}
-                  onChange={e => setPayments(p => ({ ...p, [m]: e.target.value }))}
-                  onFocus={e => { if (e.target.value === "0") setPayments(p => ({ ...p, [m]: "" })); }}
-                  onBlur={e => { if (e.target.value === "") setPayments(p => ({ ...p, [m]: "0" })); }}
-                  style={{ flex: 1, padding: "6px 10px", border: `1px solid ${(parseFloat(payments[m]) || 0) > 0 ? COLORS[m] : "#ddd"}`, borderRadius: 8, fontSize: 13, outline: "none", background: (parseFloat(payments[m]) || 0) > 0 ? COLORS[m] + "11" : "#fff" }} />
-              </div>
-            ))}
+            {METHODS.map(m => {
+              const isUSD = m === "USD";
+              const active = (parseFloat(payments[m]) || 0) > 0;
+              const disabled = isUSD && !rate;
+              return (
+                <div key={m} style={{ marginBottom: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: COLORS[m], flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, fontWeight: 600, width: 90, flexShrink: 0, color: "#555" }}>{isUSD ? "USD ($)" : m}</span>
+                    <input type="number" min="0" step={isUSD ? "0.01" : "1"} value={payments[m]} disabled={disabled}
+                      onChange={e => setPayments(p => ({ ...p, [m]: e.target.value }))}
+                      onFocus={e => { if (e.target.value === "0") setPayments(p => ({ ...p, [m]: "" })); }}
+                      onBlur={e => { if (e.target.value === "") setPayments(p => ({ ...p, [m]: "0" })); }}
+                      style={{ flex: 1, minWidth: 0, padding: "6px 10px", border: `1px solid ${active ? COLORS[m] : "#ddd"}`, borderRadius: 8, fontSize: 13, outline: "none", background: disabled ? "#f3f4f6" : active ? COLORS[m] + "11" : "#fff" }} />
+                    {isUSD && rate > 0 && remaining > 0 && (
+                      <Btn size="sm" color="#14b8a6" variant="outline"
+                        onClick={() => setPayments(p => ({ ...p, USD: String(Math.ceil((remaining / rate) * 100) / 100) }))}>Fill</Btn>
+                    )}
+                  </div>
+                  {isUSD && usdAmt > 0 && rate > 0 && (
+                    <div style={{ marginLeft: 118, marginTop: 4, fontSize: 12, fontWeight: 600, color: "#0f766e" }}>
+                      ${usdAmt.toFixed(2)} = SOS {fmt(usdAmt * rate)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
           <div style={{ fontSize: 13, marginBottom: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", color: "#888" }}><span>Subtotal</span><span>SOS {fmt(subtotal)}</span></div>
             {discount > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", color: "#ef4444" }}><span>Discount ({discount}%)</span><span>- SOS {fmt(discountAmt)}</span></div>}
             <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: `2px solid ${s.border}`, fontWeight: 700, fontSize: 16, marginTop: 6 }}><span>Total</span><span style={{ color: "#4f8cff" }}>SOS {fmt(total)}</span></div>
+            {rate > 0 && total > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0 6px", color: "#0f766e", fontWeight: 600 }}><span>≈ in USD</span><span>${(total / rate).toFixed(2)}</span></div>}
             <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", color: "#888" }}><span>Total Paid</span><span style={{ color: totalPaid >= total ? "#22c55e" : "#f59e0b", fontWeight: 600 }}>SOS {fmt(totalPaid)}</span></div>
             {remaining > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", color: "#ef4444", fontWeight: 600 }}><span>Remaining</span><span>SOS {fmt(remaining)}</span></div>}
             {change > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", color: "#22c55e", fontWeight: 600 }}><span>Change</span><span>SOS {fmt(change)}</span></div>}
@@ -877,8 +938,10 @@ function Receipt({ sale, onClose }) {
           {sale.discount > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: "#ef4444" }}><span>Discount</span><span>-SOS {fmt(sale.discountAmt)}</span></div>}
           <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15, marginTop: 6 }}><span>TOTAL</span><span>SOS {fmt(sale.total)}</span></div>
           <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>
-            {sale.paymentBreakdown && Object.keys(sale.paymentBreakdown).length > 1
-              ? Object.entries(sale.paymentBreakdown).map(([m, v]) => <div key={m}>{m}: SOS {fmt(v as number)}</div>)
+            {sale.paymentBreakdown && (Object.keys(sale.paymentBreakdown).length > 1 || sale.usdPaid > 0)
+              ? Object.entries(sale.paymentBreakdown).map(([m, v]) => m === "USD" && sale.usdPaid
+                  ? <div key={m}>USD: ${Number(sale.usdPaid).toFixed(2)} (= SOS {fmt(v as number)} @ {fmt(sale.usdRate)})</div>
+                  : <div key={m}>{m}: SOS {fmt(v as number)}</div>)
               : <div>Payment: {sale.paymentMethod}</div>}
             {sale.change > 0 && <div style={{ color: "#22c55e" }}>Change: SOS {fmt(sale.change)}</div>}
           </div>
@@ -904,10 +967,6 @@ function Products({ notify, darkMode }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: "", barcode: "", category: "", brand: "", costPrice: "", sellingPrice: "", quantity: "", reorderLevel: "", supplier: "", image: "📦", description: "" });
-  const [showImportPreview, setShowImportPreview] = useState(false);
-  const [importRows, setImportRows] = useState([]);
-  const [importing, setImporting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const u1 = FDB.subscribe("products", setProducts);
@@ -938,149 +997,18 @@ function Products({ notify, darkMode }) {
     setEditing(p.id); setShowForm(true);
   };
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const wb = XLSX.read(evt.target?.result, { type: "binary" });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
-        if (rows.length === 0) { notify("Excel file is empty", "error"); return; }
-        // Map columns flexibly (case-insensitive)
-        const mapped = rows.map(row => {
-          const get = (...keys) => {
-            for (const k of keys) {
-              const found = Object.keys(row).find(rk => rk.toLowerCase().replace(/\s/g,"") === k.toLowerCase().replace(/\s/g,""));
-              if (found && row[found] !== "") return String(row[found]);
-            }
-            return "";
-          };
-          return {
-            id: genId(),
-            name: get("name","productname","product"),
-            barcode: get("barcode","code","sku"),
-            brand: get("brand","make"),
-            category: get("category","cat"),
-            costPrice: +get("costprice","cost","buyprice","purchaseprice") || 0,
-            sellingPrice: +get("sellingprice","price","saleprice","sell") || 0,
-            quantity: +get("quantity","qty","stock","instock") || 0,
-            reorderLevel: +get("reorderlevel","reorder","minstock","minimum") || 5,
-            supplier: get("supplier","vendor"),
-            image: get("image","emoji","icon") || "📦",
-            description: get("description","desc","notes") || "",
-            dateAdded: now(),
-          };
-        }).filter(p => p.name);
-        if (mapped.length === 0) { notify("No valid products found. Make sure your file has a 'Name' column.", "error"); return; }
-        setImportRows(mapped);
-        setShowImportPreview(true);
-      } catch (err) {
-        notify("Could not read file. Please use .xlsx or .csv format", "error");
-      }
-    };
-    reader.readAsBinaryString(file);
-    e.target.value = "";
-  };
-
-  const confirmImport = async (mode: "add" | "replace") => {
-    setImporting(true);
-    try {
-      let updated;
-      if (mode === "replace") {
-        updated = importRows;
-      } else {
-        // Add new, skip duplicates by name
-        const existingNames = products.map(p => p.name.toLowerCase());
-        const newOnes = importRows.filter(p => !existingNames.includes(p.name.toLowerCase()));
-        updated = [...products, ...newOnes];
-        notify(`Imported ${newOnes.length} new products (${importRows.length - newOnes.length} duplicates skipped) ✓`);
-      }
-      await FDB.set("products", updated);
-      if (mode === "replace") notify(`Replaced all products with ${importRows.length} imported products ✓`);
-      setShowImportPreview(false);
-      setImportRows([]);
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const downloadTemplate = () => {
-    const ws = XLSX.utils.json_to_sheet([
-      { Name: "Example Product", Barcode: "001", Brand: "BrandName", Category: "Food & Beverages", CostPrice: 5000, SellingPrice: 8000, Quantity: 50, ReorderLevel: 10, Supplier: "Supplier Name", Image: "📦" },
-      { Name: "Rice 50kg", Barcode: "002", Brand: "Golden", Category: "Food & Beverages", CostPrice: 85000, SellingPrice: 110000, Quantity: 20, ReorderLevel: 5, Supplier: "Daallo Trading", Image: "🌾" },
-    ]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Products");
-    XLSX.writeFile(wb, "daray-shop-products-template.xlsx");
-  };
-
   const filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search));
 
   return (
     <div>
-      <input type="file" ref={fileInputRef} accept=".xlsx,.xls,.csv" onChange={handleFileUpload} style={{ display: "none" }} />
-
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Search products..."
           style={{ padding: "10px 16px", border: "1px solid #e0e0e0", borderRadius: 10, fontSize: 14, width: 280, outline: "none" }} />
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <Btn onClick={downloadTemplate} color="#888" variant="outline" size="sm">📥 Download Template</Btn>
-          <Btn onClick={() => fileInputRef.current?.click()} color="#22c55e" size="sm">📂 Import Excel / CSV</Btn>
           <Btn onClick={() => { setShowForm(true); setEditing(null); }}>+ Add Product</Btn>
         </div>
       </div>
 
-      {/* Import Preview Modal */}
-      {showImportPreview && (
-        <Modal title={`Preview — ${importRows.length} products found`} onClose={() => { setShowImportPreview(false); setImportRows([]); }} width={700}>
-          <div style={{ background: "#f0f8ff", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#1e40af" }}>
-            ℹ️ Found <strong>{importRows.length} products</strong> in your file. Choose how to import them:
-          </div>
-          <div style={{ maxHeight: 300, overflowY: "auto", border: "1px solid #e0e0e0", borderRadius: 10, marginBottom: 16 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead style={{ background: "#f8f9fc", position: "sticky", top: 0 }}>
-                <tr>
-                  {["#","Name","Barcode","Brand","Cost","Selling","Qty","Reorder"].map(h => (
-                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#888", borderBottom: "1px solid #e0e0e0" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {importRows.map((p, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid #f0f1f5" }}>
-                    <td style={{ padding: "7px 10px", color: "#888" }}>{i + 1}</td>
-                    <td style={{ padding: "7px 10px", fontWeight: 600 }}>{p.image} {p.name}</td>
-                    <td style={{ padding: "7px 10px", color: "#888" }}>{p.barcode || "—"}</td>
-                    <td style={{ padding: "7px 10px" }}>{p.brand || "—"}</td>
-                    <td style={{ padding: "7px 10px" }}>SOS {fmt(p.costPrice)}</td>
-                    <td style={{ padding: "7px 10px", color: "#22c55e", fontWeight: 600 }}>SOS {fmt(p.sellingPrice)}</td>
-                    <td style={{ padding: "7px 10px" }}>{p.quantity}</td>
-                    <td style={{ padding: "7px 10px" }}>{p.reorderLevel}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div style={{ background: "#f0fff4", border: "1px solid #d1fae5", borderRadius: 10, padding: 14 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: "#065f46", marginBottom: 6 }}>➕ Add to existing</div>
-              <div style={{ fontSize: 12, color: "#047857", marginBottom: 12 }}>New products will be added. Duplicate names will be skipped.</div>
-              <Btn onClick={() => confirmImport("add")} color="#22c55e" style={{ width: "100%" }}>
-                {importing ? "Importing..." : "Add Products"}
-              </Btn>
-            </div>
-            <div style={{ background: "#fff3f3", border: "1px solid #fcc", borderRadius: 10, padding: 14 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: "#991b1b", marginBottom: 6 }}>🔄 Replace all</div>
-              <div style={{ fontSize: 12, color: "#b91c1c", marginBottom: 12 }}>All existing products will be deleted and replaced with these.</div>
-              <Btn onClick={() => { if(confirm("This will delete ALL existing products. Are you sure?")) confirmImport("replace"); }} color="#ef4444" style={{ width: "100%" }}>
-                {importing ? "Importing..." : "Replace All"}
-              </Btn>
-            </div>
-          </div>
-        </Modal>
-      )}
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e8eaf0", overflow: "hidden" }}>
         <Table headers={["", "Name", "Category", "Cost", "Selling", "Stock", "Status", "Actions"]} rows={filtered.map(p => [
           <span style={{ fontSize: 22 }}>{p.image || "📦"}</span>,
@@ -1544,7 +1472,7 @@ function Reports({ darkMode }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
         <div style={cardS}>
           <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 14 }}>Sales by Payment Method</div>
-          {["Cash", "ZAAD", "eDahab", "Bank Transfer"].map(m => {
+          {["Cash", "USD", "ZAAD", "eDahab", "Bank Transfer"].map(m => {
             const total = filterSales.filter(s => s.paymentMethod === m).reduce((a, s) => a + s.total, 0);
             const pct = revenue > 0 ? (total / revenue * 100).toFixed(0) : 0;
             return (
@@ -1596,7 +1524,7 @@ function Reports({ darkMode }) {
 function Settings({ notify, darkMode, currentUser, onUserUpdate }) {
   const [settings, setSettings] = useState({
     shopName: "Daray Shop", phone: "063-XXXXXXX", address: "Burao, Togdheer, Somalia",
-    currency: "SOS", taxRate: "0", zaadNumber: "", edahabNumber: "", evcNumber: "",
+    currency: "SOS", taxRate: "0", usdRate: "", usdRateDate: "", zaadNumber: "", edahabNumber: "", evcNumber: "",
     receiptFooter: "Thank you for your business!",
   });
   const [users, setUsers] = useState([]);
@@ -1605,12 +1533,15 @@ function Settings({ notify, darkMode, currentUser, onUserUpdate }) {
   const [pwError, setPwError] = useState("");
 
   useEffect(() => {
-    FDB.get("settings", settings).then(s => { if (s) setSettings(s); });
+    FDB.get("settings", settings).then(s => { if (s) setSettings(prev => ({ ...prev, ...s })); });
     FDB.subscribe("users", setUsers);
   }, []);
 
   const saveSettings = async () => {
-    await FDB.set("settings", settings);
+    const prev = await FDB.get("settings", {});
+    const newRate = parseFloat(String(settings.usdRate)) || 0;
+    const rateChanged = newRate !== (+prev?.usdRate || 0);
+    await FDB.set("settings", { ...settings, usdRate: newRate, usdRateDate: rateChanged ? now() : (prev?.usdRateDate || "") });
     notify("Settings saved ✓");
   };
 
@@ -1671,6 +1602,9 @@ function Settings({ notify, darkMode, currentUser, onUserUpdate }) {
           </Select>
           <Input label="Tax Rate (%)" type="number" value={settings.taxRate} onChange={e => setSettings({ ...settings, taxRate: e.target.value })} />
         </div>
+        <Input label={currentUser.role === "admin" ? "USD Exchange Rate (SOS per 1 USD) — update daily" : "USD Exchange Rate (only admin can change)"}
+          type="number" value={settings.usdRate ?? ""} disabled={currentUser.role !== "admin"}
+          onChange={e => setSettings({ ...settings, usdRate: e.target.value })} placeholder="e.g. 8500" />
       </div>
 
       <div style={s.section}>
